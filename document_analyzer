@@ -1,0 +1,144 @@
+import streamlit as st
+import os
+import docx2txt
+from PyPDF2 import PdfReader
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import pandas as pd
+import numpy as np
+import tempfile
+
+def extract_text_from_file(file):
+    """
+    Extracts text from an uploaded file (PDF or DOCX).
+    """
+    file_extension = os.path.splitext(file.name)[1].lower()
+    text = ""
+    
+    # Write the uploaded file to a temporary location for processing
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+        temp_file.write(file.read())
+        temp_filepath = temp_file.name
+
+    try:
+        if file_extension == ".pdf":
+            reader = PdfReader(temp_filepath)
+            for page in reader.pages:
+                text += page.extract_text() or ""
+        elif file_extension == ".docx":
+            text = docx2txt.process(temp_filepath)
+        else:
+            st.warning(f"Unsupported file type: {file_extension}. Skipping {file.name}.")
+
+    except Exception as e:
+        st.error(f"Error processing {file.name}: {e}")
+    finally:
+        os.remove(temp_filepath) # Clean up the temporary file
+    
+    return text.strip()
+
+def calculate_similarity(documents, filenames, similarity_threshold):
+    """
+    Calculates and returns a DataFrame of similar document pairs.
+    """
+    if len(documents) < 2:
+        return pd.DataFrame()
+
+    vectorizer = TfidfVectorizer(stop_words='english', lowercase=True)
+    try:
+        tfidf_matrix = vectorizer.fit_transform(documents)
+    except ValueError:
+        st.warning("Could not vectorize documents. They might be too short or lack common words.")
+        return pd.DataFrame()
+
+    cosine_similarities = cosine_similarity(tfidf_matrix)
+
+    similar_pairs = []
+    for i in range(len(filenames)):
+        for j in range(i + 1, len(filenames)):
+            similarity_score = cosine_similarities[i][j]
+            if similarity_score >= similarity_threshold:
+                similar_pairs.append({
+                    "Document 1": filenames[i],
+                    "Document 2": filenames[j],
+                    "Similarity Score": f"{similarity_score:.4f}"
+                })
+    
+    return pd.DataFrame(similar_pairs)
+
+### Streamlit UI Components ###
+st.set_page_config(page_title="Document Similarity Analyzer", layout="wide")
+st.title("Document Similarity Analyzer")
+
+st.markdown("""
+Welcome to the Document Similarity Analyzer, a business intelligence application designed to help you
+identify potential content overlap across a large collection of documents. This tool uses advanced
+text analytics techniques—TF-IDF and Cosine Similarity—to provide actionable insights.
+""")
+
+with st.expander("Methodology and Best Practices", expanded=False):
+    st.markdown("""
+    This tool employs a standard analytics pipeline:
+    1.  **Extraction:** Text is extracted from each uploaded `.docx` or `.pdf` file.
+    2.  **Transformation (Vectorization):** The text is converted into numerical vectors using the
+        TF-IDF (Term Frequency-Inverse Document Frequency) model. This technique assigns
+        weights to words based on their importance to a specific document within the entire
+        collection.
+    3.  **Analysis (Cosine Similarity):** The similarity between document pairs is calculated
+        by measuring the cosine of the angle between their TF-IDF vectors. A score of 1 indicates
+        identical content, while a score of 0 indicates no common content.
+
+    This methodology is foundational to modern data mining and is a core component of text analytics
+    systems used by organizations globally. It is analogous to the data quality and content management
+    principles discussed in the PostgreSQL documentation regarding full-text search.
+    """)
+
+st.subheader("Upload Your Documents")
+uploaded_files = st.file_uploader(
+    "Upload your Word (.docx) and PDF (.pdf) files here", 
+    type=["docx", "pdf"], 
+    accept_multiple_files=True
+)
+
+st.sidebar.header("Configuration")
+similarity_threshold = st.sidebar.slider(
+    "Select Similarity Threshold",
+    min_value=0.0,
+    max_value=1.0,
+    value=0.75,
+    step=0.05,
+    help="Only pairs with a similarity score equal to or above this value will be shown."
+)
+
+if uploaded_files:
+    if st.button("Analyze Documents"):
+        with st.spinner("Analyzing documents... This may take a moment for a large number of files."):
+            file_texts = []
+            file_names = []
+            
+            for file in uploaded_files:
+                text = extract_text_from_file(file)
+                if text:
+                    file_texts.append(text)
+                    file_names.append(file.name)
+            
+            if len(file_texts) < 2:
+                st.warning("Please upload at least two documents for comparison.")
+            else:
+                results_df = calculate_similarity(file_texts, file_names, similarity_threshold)
+                
+                if not results_df.empty:
+                    st.success("Analysis complete!")
+                    st.markdown(f"### Results: Document Pairs with >={similarity_threshold} Similarity")
+                    st.dataframe(results_df, use_container_width=True)
+                else:
+                    st.info("No document pairs were found with a similarity score at or above the selected threshold.")
+
+### **How to Run the Application**
+
+##1.  **Save the Code:** Save the entire code block above into a file named `document_analyzer.py`.
+##2.  **Run from Terminal:** Open your terminal or command prompt, navigate to the directory where you saved the file, and run the following command:
+
+##    ```bash    streamlit run document_analyzer.py 3.  **Use the App:** Your web browser will automatically open to a local URL (e.g., `http://localhost:8501`). You can now drag and drop your files into the uploader, adjust the similarity threshold in the sidebar, and click "Analyze Documents" to see the results.
+
+##This application provides a robust and professional interface that aligns with best practices in business intelligence dashboard design, making the process of content analysis intuitive and efficient.
